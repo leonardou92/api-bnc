@@ -9,6 +9,7 @@ import authRouter from './routes/auth.routes';
 import bankAccountsRouter from './routes/bankAccounts.routes';
 import transactionsRouter from './routes/transactions.routes';
 import associatesRouter from './routes/associates.routes';
+import servicesRouter from './routes/services.routes';
 import { authTokenMiddleware } from './middleware/authToken';
 import { prisma } from './lib/prisma';
 import { logError } from './utils/logger';
@@ -115,6 +116,7 @@ export const createApp = (): Application => {
   app.use('/api/bank-accounts', bankAccountsRouter);
   app.use('/api/transactions', transactionsRouter);
   app.use('/api/associates', associatesRouter);
+  app.use('/api/services', servicesRouter);
 
   return app;
 };

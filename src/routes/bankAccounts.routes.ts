@@ -8,7 +8,6 @@ const router = Router();
 router.post('/', async (req, res) => {
   try {
     const {
-      clientId,
       accountNumber,
       alias,
       bankCode,
@@ -16,15 +15,28 @@ router.post('/', async (req, res) => {
       isActive,
     } = req.body || {};
 
-    if (!clientId || !accountNumber || typeof bankCode !== 'number') {
+    const clientIdFromEnv = process.env.BNC_CLIENT_ID;
+
+    if (!clientIdFromEnv) {
+      logError(
+        'bank-accounts/create',
+        new Error('BNC_CLIENT_ID not configured for bank account creation'),
+      );
+      return res.status(500).json({
+        message:
+          'No está configurado BNC_CLIENT_ID en el servidor. Consulte al administrador.',
+      });
+    }
+
+    if (!accountNumber || typeof bankCode !== 'number') {
       return res.status(400).json({
-        message: 'Debe enviar clientId, accountNumber y bankCode (number).',
+        message: 'Debe enviar accountNumber y bankCode (number).',
       });
     }
 
     const created = await prisma.bankAccount.create({
       data: {
-        clientId,
+        clientId: clientIdFromEnv,
         accountNumber,
         alias: alias ?? null,
         bankCode,
