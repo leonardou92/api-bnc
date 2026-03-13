@@ -59,10 +59,15 @@ model BankTransaction {
   // Tipo lógico de la transacción (Transferencia, Depósito, Pago Móvil, etc.)
   kind           TransactionKind @default(TRF)
 
+  // Descripción del tipo de transacción según el código BNC
+  transactionTypeLabel String?
+
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   @@index([bankAccountId])
+  @@index([code])
+  @@index([transactionTypeLabel])
   @@unique([bankAccountId, referenceA, amount, movementDate, type])
 }
 

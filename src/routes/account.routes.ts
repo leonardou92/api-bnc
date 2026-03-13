@@ -1,7 +1,9 @@
 import { Router } from 'express';
+import type { BankTransactionCreateManyInput } from '../generated/prisma/models/BankTransaction';
 import { prisma } from '../lib/prisma';
 import { decryptJson, encryptJson } from '../utils/bncCrypto';
 import { logError } from '../utils/logger';
+import { getTransactionTypeLabel } from '../utils/transactionTypes';
 
 const router = Router();
 
@@ -495,14 +497,21 @@ router.post('/history-by-date-sync', async (req, res) => {
     const data = await upstreamResponse.json();
 
     if (!upstreamResponse.ok || data.status !== 'OK') {
-      logError('account/history-by-date-sync', new Error('BNC status not OK'), {
+      const bncMessage = typeof data?.message === 'string' ? data.message : '';
+      logError('account/history-by-date-sync', new Error(bncMessage || 'BNC status not OK'), {
         statusCode: upstreamResponse.status,
         body: data,
       });
-      return res.status(upstreamResponse.status).json({
-        message:
-          'Error al consultar el historial por rango de fechas (sync) en el BNC.',
+      const hint =
+        data?.message && String(data.message).toUpperCase().includes('RWK')
+          ? ' El WorkingKey puede estar vencido (renueve con Auth/LogOn).'
+          : data?.message
+            ? ''
+            : ' Verifique WorkingKey (vence a medianoche), fechas y cuenta.';
+      return res.status(502).json({
+        message: 'Error al consultar el historial por rango de fechas (sync) en el BNC.' + hint,
         statusCode: upstreamResponse.status,
+        bncMessage: bncMessage || null,
         body: data,
       });
     }
@@ -567,66 +576,45 @@ router.post('/history-by-date-sync', async (req, res) => {
       return Number.isNaN(d.getTime()) ? null : d;
     };
 
-    const dataToInsert = movements
-      .map((m) => {
-        const movementDate = parseDate(m.Date);
-        const amount = m.Amount !== undefined && m.Amount !== null ? Number(m.Amount) : null;
-        const type = m.Type !== undefined && m.Type !== null ? String(m.Type) : null;
+    const dataToInsert: BankTransactionCreateManyInput[] = [];
 
-        // Si faltan campos clave para identificar el movimiento, lo ignoramos
-        if (!movementDate || amount === null || !type) {
-          return null;
-        }
+    for (const m of movements) {
+      const movementDate = parseDate(m.Date);
+      const amount = m.Amount !== undefined && m.Amount !== null ? Number(m.Amount) : null;
+      const type = m.Type !== undefined && m.Type !== null ? String(m.Type) : null;
+      if (!movementDate || amount === null || !type) continue;
 
-        const upperType = String(type).toUpperCase();
-        const upperConcept = String(m.Concept ?? '').toUpperCase();
-        const upperBalanceDelta = String(m.BalanceDelta ?? '').toUpperCase();
+      const upperType = type.toUpperCase();
+      const upperConcept = String(m.Concept ?? '').toUpperCase();
+      const upperBalanceDelta = String(m.BalanceDelta ?? '').toUpperCase();
+      let kind: 'TRF' | 'DEP' | 'P2P' = 'TRF';
+      if (upperType.includes('PAGO MOVIL') || upperConcept.includes('PAGO MOVIL')) kind = 'P2P';
+      else if (upperBalanceDelta === 'INGRESO') kind = 'DEP';
 
-        let kind: 'TRF' | 'DEP' | 'P2P' = 'TRF';
+      const transactionTypeLabel =
+        m.Code !== undefined && m.Code !== null ? getTransactionTypeLabel(m.Code) : null;
 
-        if (upperType.includes('PAGO MOVIL') || upperConcept.includes('PAGO MOVIL')) {
-          kind = 'P2P';
-        } else if (upperBalanceDelta === 'INGRESO') {
-          kind = 'DEP';
-        } else {
-          kind = 'TRF';
-        }
-
-        return {
-          bankAccountId: bankAccount.id,
-          accountNumber,
-          movementDate,
-          controlNumber: String(m.ControlNumber ?? ''),
-          amount,
-          code: String(m.Code ?? ''),
-          bankCode: String(m.BankCode ?? ''),
-          debtorInstrument:
-            m.DebtorInstrument !== undefined && m.DebtorInstrument !== null
-              ? String(m.DebtorInstrument)
-              : null,
-          concept: String(m.Concept ?? ''),
-          type,
-          balanceDelta: String(m.BalanceDelta ?? ''),
-          referenceA:
-            m.ReferenceA !== undefined && m.ReferenceA !== null
-              ? String(m.ReferenceA)
-              : null,
-          referenceB:
-            m.ReferenceB !== undefined && m.ReferenceB !== null
-              ? String(m.ReferenceB)
-              : null,
-          referenceC:
-            m.ReferenceC !== undefined && m.ReferenceC !== null
-              ? String(m.ReferenceC)
-              : null,
-          referenceD:
-            m.ReferenceD !== undefined && m.ReferenceD !== null
-              ? String(m.ReferenceD)
-              : null,
-          kind,
-        };
-      })
-      .filter((x): x is NonNullable<typeof x> => x !== null);
+      const row: BankTransactionCreateManyInput = {
+        bankAccountId: bankAccount.id,
+        accountNumber,
+        movementDate,
+        controlNumber: String(m.ControlNumber ?? ''),
+        amount,
+        code: String(m.Code ?? ''),
+        bankCode: String(m.BankCode ?? ''),
+        concept: String(m.Concept ?? ''),
+        type,
+        balanceDelta: String(m.BalanceDelta ?? ''),
+        kind,
+        debtorInstrument: m.DebtorInstrument != null ? String(m.DebtorInstrument) : null,
+        referenceA: m.ReferenceA != null ? String(m.ReferenceA) : null,
+        referenceB: m.ReferenceB != null ? String(m.ReferenceB) : null,
+        referenceC: m.ReferenceC != null ? String(m.ReferenceC) : null,
+        referenceD: m.ReferenceD != null ? String(m.ReferenceD) : null,
+        transactionTypeLabel: transactionTypeLabel ?? null,
+      };
+      dataToInsert.push(row);
+    }
 
     if (dataToInsert.length === 0) {
       return res.status(200).json({
