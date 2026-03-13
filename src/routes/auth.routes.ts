@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import jwt, { Secret, SignOptions } from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
 import { decryptJson, encryptJson } from '../utils/bncCrypto';
 import { logError } from '../utils/logger';
@@ -207,22 +207,25 @@ router.post('/register', async (req, res) => {
 
 // Login local para obtener JWT
 router.post('/login-token', async (req, res) => {
-  const jwtSecret = process.env.JWT_SECRET;
-  const jwtExpiresIn = process.env.JWT_EXPIRES_IN || '15m';
+  const jwtSecretEnv = process.env.JWT_SECRET;
+  const jwtExpiresIn: SignOptions['expiresIn'] =
+    (process.env.JWT_EXPIRES_IN || '15m') as SignOptions['expiresIn'];
 
-  if (!jwtSecret) {
+  if (!jwtSecretEnv) {
     logError('auth/login-token', new Error('JWT_SECRET not configured'));
     return res.status(500).json({
       message: 'JWT_SECRET no está configurado en el servidor.',
     });
   }
 
-  if (process.env.NODE_ENV === 'production' && jwtSecret.length < 32) {
+  if (process.env.NODE_ENV === 'production' && jwtSecretEnv.length < 32) {
     logError('auth/login-token', new Error('JWT_SECRET too weak (length < 32)'));
     return res.status(500).json({
       message: 'Configuración insegura de JWT_SECRET en producción. Consulte al administrador.',
     });
   }
+
+  const jwtSecret: Secret = jwtSecretEnv;
 
   try {
     const { username, password } = req.body || {};
@@ -256,7 +259,9 @@ router.post('/login-token', async (req, res) => {
       username: user.username,
     };
 
-    const token = jwt.sign(payload, jwtSecret, { expiresIn: jwtExpiresIn });
+    const signOptions: SignOptions = { expiresIn: jwtExpiresIn };
+
+    const token = jwt.sign(payload, jwtSecret, signOptions);
 
     return res.status(200).json({
       token,
